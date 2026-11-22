@@ -1,38 +1,62 @@
-/* Service Worker — سوبر ماركت الشايب
-   مبدأ الأمان: لا يعترض ولا يخزّن أي بيانات حسابات (أرصدة، ديون، دفعات).
-   كل طلبات البيانات تذهب دائماً إلى الشبكة مباشرة حتى لا تظهر أرقام قديمة.
-   يخزّن فقط هيكل الصفحة والأصول الثابتة (الأيقونات وملف التعريف) لتسريع الفتح. */
-const CACHE_NAME = "shaib-shell-v1";
-const SHELL_ASSETS = [
-  "./",
-  "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/icon-512-maskable.png"
+const CACHE_NAME = 'shaib-supermarket-v3';
+const CORE_ASSETS = [
+  './',
+  './index.html',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-512-maskable.png'
 ];
 
-self.addEventListener("install", (event) => {
+self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS))
   );
+  self.skipWaiting();
 });
 
-self.addEventListener("activate", (event) => {
+self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+      Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+      )
+    )
   );
+  self.clients.claim();
 });
 
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-  // البيانات وطلبات الخادم: شبكة فقط، دون أي تخزين
-  if (request.method !== "GET" || new URL(request.url).pathname.includes("/api")) {
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', copy));
+          return response;
+        })
+        .catch(async () => {
+          const cachedIndex = await caches.match('./index.html');
+          return cachedIndex || caches.match('./');
+        })
+    );
     return;
   }
-  // الأصول الثابتة: من الذاكرة أولاً ثم الشبكة
+
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request))
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+      return fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200 && response.type === 'basic') {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match('./index.html'));
+    })
   );
 });
