@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shaib-supermarket-v3';
+const CACHE_NAME = 'shaib-supermarket-v5';
 const CORE_ASSETS = [
   './',
   './index.html',
