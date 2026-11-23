@@ -232,11 +232,45 @@ details.box summary{cursor:pointer;font-weight:700;padding:8px 0;min-height:2.5r
 <div id="modalRoot"></div>
 <input type="file" id="fileRestore" accept=".json,application/json" class="hidden" />
 <input type="file" id="fileStamp" accept="image/*" class="hidden" />
+<script type="module">
+/* ============================================================
+   استعادة Gmail عبر Firebase — خدمة Google تصدر رابط الاستعادة وتتحقق منه
+   التكوين العام للويب ليس سراً؛ حساب المالك ثابت ببصمة UID ولا يوجد أي تسجيل عام.
+   ============================================================ */
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, inMemoryPersistence, setPersistence, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+const firebaseConfig={apiKey:'AIzaSyCEHjpj83MNUcO-HPVrPmGTHk_WWQ9kENY',authDomain:'shaib-supermarket.firebaseapp.com',projectId:'shaib-supermarket',storageBucket:'shaib-supermarket.firebasestorage.app',messagingSenderId:'267656754777',appId:'1:267656754777:web:f03336ef83fedbe0a46348'};
+const OWNER_EMAIL='omarmax2019@gmail.com';
+const OWNER_UID='OLqUdCx9mlfvz1JN5jWyURo060G3';
+const auth=getAuth(initializeApp(firebaseConfig));
+let authPersistenceReady=setPersistence(auth,inMemoryPersistence).catch(function(){throw new Error('firebase-persistence')});
+window.shaibFirebaseRecovery={
+  async sendReset(){
+    await authPersistenceReady;
+    auth.languageCode='ar';
+    await sendPasswordResetEmail(auth,OWNER_EMAIL,{url:'https://omarradwan1999.github.io/shaib-supermarket/',handleCodeInApp:false});
+  },
+  async verifyAndFinish(password){
+    await authPersistenceReady;
+    const cred=await signInWithEmailAndPassword(auth,OWNER_EMAIL,password);
+    if(cred.user.uid!==OWNER_UID){
+      await signOut(auth).catch(function(){});
+      throw new Error('wrong-owner');
+    }
+    await signOut(auth).catch(function(){});
+  }
+};
+</script>
 <script>
 'use strict';
 /* ============================================================
    سوبر ماركت الشايب — النسخة المحمولة المستقلة
    كل البيانات في localStorage على هذا الجهاز. لا أي اتصال شبكي.
+   تحديث 2026-11-23: إلزام رمز PIN للعامل، استعادة كلمة سر المالك
+   عبر رابط Google على Gmail المالك دون عرض أي رمز على الشاشة، نسخة داخلية دوّارة من
+   التخزين (تحمي من التلف فقط ولا تنجو من مسح بيانات المتصفح)،
+   تذكير تلقائي بالنسخة الاحتياطية، منع رصيد مخزون سالب، وربط
+   تعديل/حذف فاتورة التاجر بحركة المخزون المرتبطة بها.
    ============================================================ */
 var LS_KEY='shaibPortableV1';
 var SIG='تطوير النظام: م. عمر زياد أبو رضوان © 2026';
@@ -283,15 +317,40 @@ function hashSecret(secret,salt){return sha256hex(salt+'::'+secret)}
 function defaultSettings(){return{shopName:'سوبر ماركت الشايب',shopAddress:'',shopPhone:'',statementNote:'',stampImage:'',overdueDays:30,backupWarnDays:7,lastBackupAt:0}}
 function emptyData(){return{
   seq:1,
-  auth:{setup:false,pwHash:'',pwSalt:'',recoveryMobile:'',recoveryGmail:'',workerPinEnabled:false,workerPinHash:'',workerPinSalt:''},
+  auth:{setup:false,pwHash:'',pwSalt:'',recoveryMobile:'',recoveryGmail:'',workerPinEnabled:false,workerPinHash:'',workerPinSalt:'',recoveryCodeHash:'',recoveryCodeSalt:''},
   settings:defaultSettings(),
   customers:[],transactions:[],inventoryItems:[],stockMovements:[],suppliers:[],supplierTransactions:[],expenses:[]
 }}
 var DB=emptyData();
-function loadDB(){
-  try{var raw=localStorage.getItem(LS_KEY);if(raw){var p=JSON.parse(raw);if(p&&typeof p==='object'){DB=Object.assign(emptyData(),p);DB.settings=Object.assign(defaultSettings(),p.settings||{});DB.auth=Object.assign(emptyData().auth,p.auth||{})}}}catch(e){}
+function tryParseDB(raw){
+  if(!raw)return null;
+  try{var p=JSON.parse(raw);if(p&&typeof p==='object'){var d=Object.assign(emptyData(),p);d.settings=Object.assign(defaultSettings(),p.settings||{});d.auth=Object.assign(emptyData().auth,p.auth||{});return d}}catch(e){}
+  return null;
 }
-function saveDB(){try{localStorage.setItem(LS_KEY,JSON.stringify(DB))}catch(e){toast('تعذّر الحفظ: مساحة التخزين ممتلئة')}}
+function loadDB(){
+  var raw=null,bak=null;
+  try{raw=localStorage.getItem(LS_KEY)}catch(e){}
+  var parsed=tryParseDB(raw);
+  if(parsed){DB=parsed;return}
+  try{bak=localStorage.getItem(LS_KEY+'.bak')}catch(e){}
+  var fromBak=tryParseDB(bak);
+  if(raw){try{localStorage.setItem(LS_KEY+'.corrupt',raw)}catch(e){}}
+  if(fromBak){
+    DB=fromBak;
+    try{localStorage.setItem(LS_KEY,JSON.stringify(DB))}catch(e){}
+    setTimeout(function(){toast('تلفت النسخة الرئيسية للبيانات — استُرجعت تلقائياً آخر نسخة سليمة محفوظة داخلياً')},600);
+  }else if(raw){
+    setTimeout(function(){toast('تعذّرت قراءة البيانات المحفوظة — لم تُحذف من الجهاز، راجع الإعدادات')},600);
+  }
+}
+function saveDB(){
+  var prev=null;
+  try{prev=localStorage.getItem(LS_KEY)}catch(e){}
+  try{
+    localStorage.setItem(LS_KEY,JSON.stringify(DB));
+    if(prev&&prev.length>100){try{localStorage.setItem(LS_KEY+'.bak',prev)}catch(e){}}
+  }catch(e){toast('تعذّر الحفظ: مساحة التخزين ممتلئة')}
+}
 function nextSeq(){return DB.seq++}
 
 /* ---------- حسابات الزبائن ---------- */
@@ -323,9 +382,17 @@ function custPeriod(period){
 function suppBalance(sid){var s=0;DB.supplierTransactions.forEach(function(t){if(t.supplierId===sid){if(t.type==='invoice')s+=Number(t.amount||0)-Number(t.paidAmount||0);else s-=Number(t.amount||0)}});return Math.round(s*100)/100}
 function suppTxs(sid){return DB.supplierTransactions.filter(function(t){return t.supplierId===sid}).slice().sort(function(a,b){if(a.date!==b.date)return a.date<b.date?-1:1;return (a.seq||0)-(b.seq||0)})}
 function suppPeriod(period){var inv=0,pay=0;DB.supplierTransactions.forEach(function(t){if(periodMatch(t.date,period)){if(t.type==='invoice'){inv+=Number(t.amount||0);pay+=Number(t.paidAmount||0)}else pay+=Number(t.amount||0)}});return{invoices:Math.round(inv*100)/100,payments:Math.round(pay*100)/100}}
+function findLinkedMovement(tx){
+  if(!tx)return null;
+  var mv=null;
+  if(tx.stockMovementId){mv=DB.stockMovements.filter(function(x){return x.id===tx.stockMovementId})[0]}
+  if(!mv){mv=DB.stockMovements.filter(function(x){return x.txId===tx.id})[0]}
+  return mv||null;
+}
 /* ---------- المخزون ---------- */
 function itemQty(item){var q=Number(item.openingQty||0);DB.stockMovements.forEach(function(m){if(m.itemId===item.id){if(m.type==='in')q+=Number(m.qty||0);else q-=Number(m.qty||0)}});return Math.round(q*100)/100}
 function itemMovements(iid){return DB.stockMovements.filter(function(m){return m.itemId===iid}).slice().sort(function(a,b){if(a.date!==b.date)return a.date<b.date?-1:1;return (a.seq||0)-(b.seq||0)})}
+function wouldGoNegative(cur,after){return after<-0.0001&&after<cur-0.0001}
 /* ---------- المصاريف ---------- */
 function expPeriod(track,period){var s=0;DB.expenses.forEach(function(e){if(e.track===track&&periodMatch(e.date,period))s+=Number(e.amount||0)});return Math.round(s*100)/100}
 function expFrequent(track){var counts={};DB.expenses.forEach(function(e){if(e.track===track&&e.description)counts[e.description]=(counts[e.description]||0)+1});return Object.keys(counts).sort(function(a,b){return counts[b]-counts[a]}).slice(0,5)}
@@ -353,7 +420,6 @@ function kv(k,v){return '<div class="kv"><span class="k">'+esc(k)+'</span><b>'+v
    بوابة الدخول
    ============================================================ */
 var session={role:null}; /* owner | worker */
-var recovery={codeHash:'',expires:0,attempts:0,active:false};
 
 function showScreen(id){['gate','workerApp','ownerApp'].forEach(function(x){$(x).classList.toggle('hidden',x!==id)})}
 function gateRender(state){
@@ -364,39 +430,51 @@ function gateRender(state){
   if(state==='owner'){gateOwnerLogin(b);return}
   if(state==='workerPin'){gateWorkerPin(b);return}
   if(state==='recover1'){gateRecover1(b);return}
-  if(state==='recover2'){gateRecover2(b);return}
   if(state==='recover3'){gateRecover3(b);return}
+  if(state==='recoverCloud'){gateRecoverCloud(b);return}
   /* شاشة اختيار المسار */
-  var pinNote=DB.auth.workerPinEnabled?'يتطلب رمز PIN المعيّن من المالك':'يدخل مباشرة دون رمز';
+  var pinNote=DB.auth.workerPinEnabled?'يتطلب رمز PIN المعيّن من المالك':'متوقف حتى يعيّن المالك رمز PIN من الإعدادات';
   b.innerHTML=
     '<button class="pathbtn" id="pathOwner"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#d4a020" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span><span><span class="t">دخول المالك</span><br><span class="d">النظام الكامل بكلمة السر: الزبائن، المخازن، التجار، المصاريف، الأسعار، التقارير، النسخ الاحتياطي، الإعدادات</span></span></button>'
    +'<button class="pathbtn" id="pathWorker"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#d4a020" stroke-width="1.8"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4s6.3 1.8 7.5 5.4"/></svg></span><span><span class="t">دخول العامل</span><br><span class="d">واجهة محدودة للعمل اليومي: أرصدة الزبائن وأسعار البيع للمستهلك فقط — '+pinNote+'</span></span></button>'
    +'<p class="small muted" style="text-align:center;margin:6px 0 0">بيانات هذه النسخة محفوظة على هذا الجهاز فقط. خذ نسخة احتياطية بانتظام من داخل النظام.</p>';
   $('pathOwner').onclick=function(){gateRender('owner')};
-  $('pathWorker').onclick=function(){if(DB.auth.workerPinEnabled){gateRender('workerPin')}else{enterWorker()}};
+  $('pathWorker').onclick=function(){
+    if(DB.auth.workerPinEnabled){gateRender('workerPin');return}
+    openModal(modalHead('وضع العامل متوقف')+'<div class="alertbox alert-warn">واجهة العامل تعرض أرصدة الزبائن والأسعار، لذلك لا تفتح بدون رمز PIN. على المالك الدخول بحسابه وتعيين الرمز من «الإعدادات ← رمز PIN للعامل» أولاً.</div><div class="rowline" style="margin-top:12px"><button class="btn btn-gold" id="wkGoOwner" style="flex:1">دخول المالك</button><button class="btn" style="flex:1" onclick="closeModal()">رجوع</button></div>');
+    $('wkGoOwner').onclick=function(){closeModal();gateRender('owner')};
+  };
 }
 function gateSetup(b){
   b.innerHTML='<h3 style="text-align:center;color:var(--gold2)">إعداد المالك لأول مرة</h3>'
-   +'<p class="small muted" style="text-align:center">عيّن كلمة سر المالك وبيانات الاستعادة. تُحفظ كلمة السر مشفّرة (بصمة SHA-256 مع ملح) ولا تُحفظ كنص صريح أبداً.</p>'
+   +'<p class="small muted" style="text-align:center">عيّن كلمة سر المالك ورمز PIN للعامل. تُحفظ كلمة السر والرمز مشفّرَين (بصمة SHA-256 مع ملح) ولا يُحفظان كنص صريح أبداً. استعادة كلمة السر تكون لاحقاً برابط Google إلى Gmail المالك.</p>'
    +'<label class="flabel">كلمة سر المالك</label><div class="pwdwrap"><input type="password" id="suPw" autocomplete="new-password" placeholder="٦ أحرف على الأقل"><button type="button" class="eye" data-eye="suPw">👁</button></div>'
    +'<label class="flabel">تأكيد كلمة السر</label><div class="pwdwrap"><input type="password" id="suPw2" autocomplete="new-password" placeholder="أعد كتابة كلمة السر"><button type="button" class="eye" data-eye="suPw2">👁</button></div>'
-   +'<label class="flabel">رقم جوال الاستعادة</label><input type="tel" id="suMobile" inputmode="tel" placeholder="مثال: 0599123456">'
-   +'<label class="flabel">بريد Gmail للاستعادة</label><input type="email" id="suGmail" inputmode="email" placeholder="example@gmail.com">'
+   +'<label class="flabel">رمز PIN للعامل (٤ إلى ٦ أرقام)</label><input type="password" id="suPin" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="••••">'
+   +'<label class="flabel">تأكيد رمز PIN</label><input type="password" id="suPin2" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="••••">'
+   +'<label class="flabel">بريد Gmail (لإرسال النسخ الاحتياطية)</label><input type="email" id="suGmail" inputmode="email" placeholder="example@gmail.com">'
+   +'<label class="flabel">رقم الجوال (اختياري)</label><input type="tel" id="suMobile" inputmode="tel" placeholder="مثال: 0599123456">'
    +'<div id="suErr"></div>'
    +'<button class="btn btn-gold btn-block" id="suGo" style="margin-top:14px">حفظ وبدء الاستخدام</button>';
   bindEyes(b);
   $('suGo').onclick=function(){
-    var pw=$('suPw').value,pw2=$('suPw2').value,mob=digitsOnly($('suMobile').value),gm=$('suGmail').value.trim();
+    var pw=$('suPw').value,pw2=$('suPw2').value,pin=$('suPin').value.trim(),pin2=$('suPin2').value.trim(),mob=digitsOnly($('suMobile').value),gm=$('suGmail').value.trim();
     var err='';
     if(pw.length<6)err='كلمة السر قصيرة: ٦ أحرف على الأقل.';
     else if(pw!==pw2)err='كلمتا السر غير متطابقتين.';
-    else if(mob.length<7)err='أدخل رقم جوال استعادة صحيحاً (٧ أرقام على الأقل).';
-    else if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(gm))err='أدخل بريد Gmail صحيحاً للاستعادة.';
+    else if(!/^\d{4,6}$/.test(pin))err='عيّن رمز PIN للعامل من ٤ إلى ٦ أرقام — يُطلب قبل فتح واجهة العامل.';
+    else if(pin!==pin2)err='تأكيد رمز PIN غير متطابق.';
+    else if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(gm))err='أدخل بريد Gmail صحيحاً لاستقبال النسخ الاحتياطية.';
+    else if(mob&&mob.length<7)err='رقم الجوال قصير — أدخله صحيحاً أو اتركه فارغاً.';
     if(err){$('suErr').innerHTML='<div class="alertbox alert-err">'+esc(err)+'</div>';return}
-    var salt=makeSalt();
+    var salt=makeSalt(),pinSalt=makeSalt();
     hashSecret(pw,salt).then(function(h){
-      DB.auth.setup=true;DB.auth.pwHash=h;DB.auth.pwSalt=salt;DB.auth.recoveryMobile=mob;DB.auth.recoveryGmail=gm;
-      saveDB();toast('تم إعداد حساب المالك بنجاح');enterOwner(false);
+      hashSecret(pin,pinSalt).then(function(ph){
+        DB.auth.setup=true;DB.auth.pwHash=h;DB.auth.pwSalt=salt;DB.auth.recoveryMobile=mob;DB.auth.recoveryGmail=gm;
+        DB.auth.workerPinEnabled=true;DB.auth.workerPinHash=ph;DB.auth.workerPinSalt=pinSalt;
+        saveDB();toast('تم إعداد حساب المالك بنجاح');
+        enterOwner(false);
+      });
     });
   };
 }
@@ -444,49 +522,43 @@ function gateWorkerPin(b){
   $('wpBack').onclick=function(){gateRender()};
 }
 function gateRecover1(b){
-  b.innerHTML='<h3 style="color:var(--gold2)">استعادة كلمة سر المالك</h3>'
-   +'<p class="small muted">أدخل رقم الجوال أو بريد Gmail المسجّلين عند الإعداد للتحقق من هويتك.</p>'
-   +'<label class="flabel">رقم الجوال أو Gmail المسجّل</label><input type="text" id="rcId" inputmode="email" placeholder="رقم الجوال أو البريد الإلكتروني">'
+  b.innerHTML='<h3 style="color:var(--gold2)">استعادة كلمة سر المالك عبر Gmail</h3>'
+   +'<p class="small muted">ترسل Google رابط إعادة تعيين آمن إلى Gmail المالك المسجّل. افتحه، اضبط كلمة سر الاستعادة، ثم عد هنا وأدخلها للتحقق قبل تعيين كلمة سر التطبيق المحلية.</p>'
+   +'<div class="alertbox alert-info">الرابط يصل إلى <b dir="ltr">omar********@gmail.com</b> فقط. إرسال الرابط وفتحه يتطلبان إنترنت؛ بياناتك وسجلاتك تبقى على هذا الجهاز ولا تُرسل.</div>'
    +'<div id="rcErr"></div>'
-   +'<button class="btn btn-gold btn-block" id="rcGo" style="margin-top:12px">التحقق وإظهار رمز الاستعادة</button>'
+   +'<button class="btn btn-gold btn-block" id="rcSend" style="margin-top:12px">إرسال رابط الاستعادة إلى Gmail</button>'
+   +'<div class="divider"></div>'
+   +'<label class="flabel">كلمة سر الاستعادة الجديدة من Google</label><div class="pwdwrap"><input type="password" id="rcCloudPw" autocomplete="new-password" placeholder="من رابط Gmail"><button type="button" class="eye" data-eye="rcCloudPw">👁</button></div>'
+   +'<button class="btn btn-block" id="rcVerify" style="margin-top:10px">تحقق وأكمل إلى كلمة سر جديدة</button>'
    +'<button class="btn btn-block btn-ghost" id="rcBack" style="margin-top:6px">→ رجوع</button>';
+  bindEyes(b);
   $('rcBack').onclick=function(){gateRender('owner')};
-  $('rcGo').onclick=function(){
-    var v=$('rcId').value.trim();
-    var okMobile=digitsOnly(v).length>=7&&digitsOnly(v)===digitsOnly(DB.auth.recoveryMobile);
-    var okMail=v.toLowerCase()===String(DB.auth.recoveryGmail||'').toLowerCase()&&v.length>3;
-    if(!okMobile&&!okMail){$('rcErr').innerHTML='<div class="alertbox alert-err">البيانات لا تطابق رقم الجوال أو Gmail المسجّلين. تأكد وحاول مجدداً.</div>';return}
-    var code=String(Math.floor(100000+Math.random()*900000));
-    recovery.active=true;recovery.attempts=0;recovery.expires=Date.now()+10*60*1000;
-    session._rcPlain=code;
-    sha256hex('rc::'+code).then(function(h){recovery.codeHash=h;gateRender('recover2')});
+  function msg(kind,txt){$('rcErr').innerHTML='<div class="alertbox '+(kind==='ok'?'alert-ok':kind==='info'?'alert-info':'alert-err')+'">'+esc(txt)+'</div>'}
+  $('rcSend').onclick=function(){
+    var btn=this;btn.disabled=true;msg('info','جارٍ إرسال رابط الاستعادة عبر Google…');
+    window.shaibFirebaseRecovery.sendReset().then(function(){
+      msg('ok','أُرسل رابط الاستعادة من Google إلى Gmail المالك. افتحه على أي جهاز واضبط كلمة سر الاستعادة، ثم عد هنا وأدخلها للتحقق.');
+    }).catch(function(e){
+      var code=e&&e.code||'';
+      msg('err',code==='auth/network-request-failed'?'تعذّر الاتصال بخدمة Google. تحقق من الإنترنت وأعد المحاولة.':'تعذّر إرسال رابط الاستعادة الآن. أعد المحاولة لاحقاً.');
+    }).finally(function(){btn.disabled=false});
   };
-}
-function gateRecover2(b){
-  b.innerHTML='<h3 style="color:var(--gold2)">رمز الاستعادة</h3>'
-   +'<div class="alertbox alert-warn">تنبيه صريح: هذه النسخة المحمولة تعمل دون خادم، فلا توجد خدمة SMS أو بريد ترسل الرمز فعلياً. لذلك يظهر الرمز هنا على الشاشة مباشرة بعد التحقق من بياناتك المسجّلة، ويمكنك أيضاً صياغة رسالة جاهزة به عبر الأزرار التالية.</div>'
-   +'<div class="codebox"><div class="small muted">رمز الاستعادة (صالح ١٠ دقائق، يُستخدم مرة واحدة)</div><div class="code" id="rcCode">••••••</div></div>'
-   +'<div class="rowline"><a class="btn btn-sm" id="rcSms" href="#">إرسال كرسالة SMS</a><a class="btn btn-sm" id="rcMail" href="#">إرسال عبر Gmail</a></div>'
-   +'<label class="flabel">أدخل الرمز المكوّن من ٦ أرقام</label><input type="text" id="rcIn" inputmode="numeric" maxlength="6" placeholder="000000" style="text-align:center;letter-spacing:6px;font-size:1.25rem">'
-   +'<div id="rcErr"></div>'
-   +'<button class="btn btn-gold btn-block" id="rcVerify" style="margin-top:12px">تأكيد الرمز</button>'
-   +'<button class="btn btn-block btn-ghost" id="rcCancel" style="margin-top:6px">إلغاء الاستعادة</button>';
-  /* استرجاع الرمز الظاهر: نعيد توليده من البصمة غير ممكن، لذا نعرضه من الذاكرة المؤقتة */
-  var shown=session._rcPlain||'';
-  $('rcCode').textContent=shown||'——————';
-  var msg='رمز استعادة كلمة سر نظام سوبر ماركت الشايب هو: '+shown+' (صالح ١٠ دقائق)';
-  $('rcSms').href='sms:'+digitsOnly(DB.auth.recoveryMobile)+'?&body='+encodeURIComponent(msg);
-  $('rcMail').href='mailto:'+encodeURIComponent(DB.auth.recoveryGmail)+'?subject='+encodeURIComponent('رمز استعادة كلمة سر سوبر ماركت الشايب')+'&body='+encodeURIComponent(msg);
-  $('rcCancel').onclick=function(){recovery.active=false;session._rcPlain='';gateRender('owner')};
-  $('rcVerify').onclick=function(){
-    if(!recovery.active||Date.now()>recovery.expires){$('rcErr').innerHTML='<div class="alertbox alert-err">انتهت صلاحية الرمز أو أُلغي. ابدأ الاستعادة من جديد.</div>';return}
-    if(recovery.attempts>=5){$('rcErr').innerHTML='<div class="alertbox alert-err">تجاوزت حد المحاولات (٥). ابدأ الاستعادة من جديد.</div>';recovery.active=false;return}
-    var v=$('rcIn').value.trim();recovery.attempts++;
-    sha256hex('rc::'+v).then(function(h){
-      if(h===recovery.codeHash){recovery.active=false;gateRender('recover3')}
-      else{$('rcErr').innerHTML='<div class="alertbox alert-err">الرمز غير صحيح. المحاولات المتبقية: '+Math.max(0,5-recovery.attempts)+'</div>'}
+  function verify(){
+    var pw=$('rcCloudPw').value;
+    if(pw.length<6){msg('err','أدخل كلمة سر الاستعادة التي ضبطتها من رابط Gmail (٦ أحرف على الأقل).');return}
+    msg('info','جارٍ التحقق من حساب الاستعادة عبر Google…');
+    window.shaibFirebaseRecovery.verifyAndFinish(pw).then(function(){
+      msg('ok','تم التحقق من Gmail المالك بنجاح. عيّن الآن كلمة سر التطبيق الجديدة.');
+      gateRender('recover3');
+    }).catch(function(e){
+      var code=e&&e.code||'';
+      if(code==='auth/network-request-failed')msg('err','تعذّر الاتصال بخدمة Google. تحقق من الإنترنت وأعد المحاولة.');
+      else if(code==='auth/wrong-password'||code==='auth/invalid-credential'||code==='auth/user-not-found'||e&&e.message==='wrong-owner')msg('err','كلمة سر الاستعادة غير صحيحة أو لا تخص حساب المالك المسجّل.');
+      else msg('err','تعذّر التحقق الآن. أعد المحاولة لاحقاً.');
     });
-  };
+  }
+  $('rcVerify').onclick=verify;
+  $('rcCloudPw').addEventListener('keydown',function(e){if(e.key==='Enter')verify()});
 }
 function gateRecover3(b){
   b.innerHTML='<h3 style="color:var(--gold2)">تعيين كلمة سر جديدة</h3>'
@@ -501,8 +573,9 @@ function gateRecover3(b){
     if(pw!==pw2){$('nrErr').innerHTML='<div class="alertbox alert-err">كلمتا السر غير متطابقتين.</div>';return}
     var salt=makeSalt();
     hashSecret(pw,salt).then(function(h){
-      DB.auth.pwHash=h;DB.auth.pwSalt=salt;saveDB();session._rcPlain='';
-      toast('تم تغيير كلمة السر — تعمل فوراً من الآن');enterOwner(false);
+      DB.auth.pwHash=h;DB.auth.pwSalt=salt;DB.auth.recoveryCodeHash='';DB.auth.recoveryCodeSalt='';saveDB();
+      toast('تم تغيير كلمة السر بعد تحقق Google — تعمل فوراً من الآن');
+      enterOwner(false);
     });
   };
 }
@@ -511,6 +584,33 @@ function gateRecover3(b){
 /* ============================================================
    الجلسة والتنقّل
    ============================================================ */
+/* تذكيرات ما بعد دخول المالك: تعيين بريد النسخ الاحتياطية، ثم قِدم النسخة الاحتياطية.
+   ملاحظة صريحة: النسخة الداخلية الدوّارة في التخزين المحلي تحمي من تلف البيانات
+   فقط، ولا تنجو من مسح بيانات المتصفح — التصدير الخارجي هو الحماية الحقيقية. */
+var securityReminderShown=false, backupReminderShown=false;
+function maybeSecuritySetupReminder(){
+  if(securityReminderShown){maybeBackupReminder();return}
+  if(session.role!=='owner'||!DB.auth.setup){maybeBackupReminder();return}
+  if(DB.auth.recoveryGmail){maybeBackupReminder();return}
+  securityReminderShown=true;
+  openModal(modalHead('بريد النسخ الاحتياطية غير معيّن')
+   +'<div class="alertbox alert-warn">استعادة كلمة السر تعمل عبر رابط Google على Gmail المالك المسجّل ولا تحتاج أي إعداد هنا. لكن بريد Gmail الخاص باستقبال النسخ الاحتياطية غير معيّن على هذا الجهاز؛ أدخله من الإعدادات لتصلك النسخ الاحتياطية.</div>'
+   +'<div class="rowline" style="margin-top:12px"><button class="btn btn-gold" id="ssGen" style="flex:1">فتح الإعدادات</button><button class="btn" id="ssLater" style="flex:1">لاحقاً</button></div>');
+  $('ssGen').onclick=function(){closeModal();gotoSection('settings');renderSettings()};
+  $('ssLater').onclick=function(){closeModal();maybeBackupReminder()};
+}
+function maybeBackupReminder(){
+  if(backupReminderShown||session.role!=='owner')return;
+  var last=Number(DB.settings.lastBackupAt||0);
+  var warn=Number(DB.settings.backupWarnDays||7);
+  if(last&&(Date.now()-last)<=warn*86400000)return;
+  backupReminderShown=true;
+  openModal(modalHead('تذكير بالنسخة الاحتياطية')
+   +'<div class="alertbox alert-warn">'+(last?'آخر نسخة احتياطية منذ '+fmt(Math.floor((Date.now()-last)/86400000))+' يوم — تجاوزت حد التنبيه ('+fmt(warn)+' أيام).':'لم تصدّر أي نسخة احتياطية بعد.')+' بياناتك محفوظة على هذا الجهاز فقط؛ مسح بيانات المتصفح أو فقدان الجهاز يضيّعها نهائياً.</div>'
+   +'<p class="small muted">صدّر نسخة الآن واحفظها خارج الجهاز (Gmail أو Drive). من الإعدادات يمكنك أيضاً استخدام زر «حفظ / إرسال إلى Gmail».</p>'
+   +'<div class="rowline" style="margin-top:12px"><button class="btn btn-gold" id="brExport" style="flex:1">⬇ تصدير نسخة الآن</button><button class="btn" style="flex:1" onclick="closeModal()">لاحقاً</button></div>');
+  $('brExport').onclick=function(){closeModal();exportBackup(false)};
+}
 function enterOwner(remember){
   session.role='owner';
   try{
@@ -520,6 +620,7 @@ function enterOwner(remember){
   showScreen('ownerApp');
   $('appShopName').textContent=DB.settings.shopName||'سوبر ماركت الشايب';
   renderInstallPanel();renderCustomers();window.scrollTo(0,0);
+  maybeSecuritySetupReminder();
 }
 function enterWorker(){
   session.role='worker';
@@ -1054,6 +1155,10 @@ function itemFormModal(id){
     var name=$('itName').value.trim();
     if(!name){$('itErr').innerHTML='<div class="alertbox alert-err">اسم الصنف مطلوب.</div>';return}
     var data={name:name,category:$('itCat').value.trim(),unit:$('itUnit').value.trim(),openingQty:Number($('itOpen').value||0),minAlert:Number($('itMin').value||0),location:$('itLoc').value.trim(),purchasePrice:Number($('itBuy').value||0),salePrice:Number($('itSell').value||0)};
+    if(!Number.isFinite(data.openingQty)||!Number.isFinite(data.minAlert)||!Number.isFinite(data.purchasePrice)||!Number.isFinite(data.salePrice)){$('itErr').innerHTML='<div class="alertbox alert-err">أدخل أرقاماً صالحة.</div>';return}
+    var oldQty=it?itemQty(it):0;
+    var projectedQty=it?Math.round((oldQty-Number(it.openingQty||0)+data.openingQty)*100)/100:data.openingQty;
+    if(wouldGoNegative(oldQty,projectedQty)){$('itErr').innerHTML='<div class="alertbox alert-err">مرفوض: الكمية الافتتاحية تجعل رصيد الصنف سالباً ('+fmt(projectedQty)+'). راجع حركات المخزون أولاً.</div>';return}
     if(it){
       var before=kv('الاسم',esc(it.name))+kv('الكمية الافتتاحية','<span class="num">'+fmt(it.openingQty)+'</span>')+kv('سعر الشراء','<span class="num">'+fmt(it.purchasePrice)+'</span>')+kv('سعر البيع','<span class="num">'+fmt(it.salePrice)+'</span>')+kv('الكمية الحالية','<span class="num">'+fmt(itemQty(it))+'</span>');
       var tmp=Object.assign({},it,data);
@@ -1118,6 +1223,11 @@ function movementModal(iid,type,existing){
     var q=Number($('mvQty').value||0);var date=$('mvDate').value;var note=$('mvNote').value.trim();
     if(!(q>0)){$('mvErr').innerHTML='<div class="alertbox alert-err">أدخل كمية أكبر من صفر.</div>';return}
     if(!isValidDateStr(date)){$('mvErr').innerHTML='<div class="alertbox alert-err">التاريخ غير صالح.</div>';return}
+    var eff=(type==='in'?q:-q);
+    var base=cur;
+    if(existing)base=cur-(existing.type==='in'?Number(existing.qty||0):-Number(existing.qty||0));
+    var afterQty=Math.round((base+eff)*100)/100;
+    if(wouldGoNegative(cur,afterQty)){$('mvErr').innerHTML='<div class="alertbox alert-err">مرفوض: هذه الحركة تجعل رصيد الصنف سالباً ('+fmt(afterQty)+'). المتاح الحالي: '+fmt(cur)+' — قلّل الكمية أو راجع حركات الصنف.</div>';return}
     if(existing){
       var before=kv('النوع',labels[existing.type])+kv('الكمية','<span class="num">'+fmt(existing.qty)+'</span>')+kv('التاريخ',fmtDateShort(existing.date))+kv('الكمية الحالية','<span class="num">'+fmt(cur)+'</span>');
       var after=kv('النوع',labels[type])+kv('الكمية','<span class="num">'+fmt(q)+'</span>')+kv('التاريخ',fmtDateShort(date))+kv('الكمية بعد التعديل','<span class="num">'+fmt(proj())+'</span>');
@@ -1135,8 +1245,12 @@ function deleteMovement(mid,iid){
   var it=DB.inventoryItems.filter(function(x){return x.id===iid})[0];
   var cur=itemQty(it);
   var after=Math.round((cur-(m.type==='in'?Number(m.qty||0):-Number(m.qty||0)))*100)/100;
+  if(wouldGoNegative(cur,after)){
+    openModal(modalHead('تعذّر حذف الحركة')+'<div class="alertbox alert-err">لا يمكن حذف هذه الحركة: رصيد الصنف سيصبح سالباً ('+fmt(after)+') لأن الكمية الحالية ('+fmt(cur)+') مستهلكة بحركات لاحقة. راجع حركات الصنف أولاً.</div><button class="btn btn-block" onclick="closeModal()">حسناً</button>');
+    return;
+  }
   var labels={in:'وارد',out:'صادر',damage:'تالف'};
-  confirmModal('حذف حركة مخزون',baBox(kv('النوع',labels[m.type])+kv('الكمية','<span class="num">'+fmt(m.qty)+'</span>')+kv('الكمية قبل','<span class="num">'+fmt(cur)+'</span>'),kv('الكمية بعد الحذف','<span class="num">'+fmt(after)+'</span>')),'حذف الحركة',true,function(){
+  confirmModal('حذف حركة مخزون',baBox(kv('النوع',labels[m.type])+kv('الكمية','<span class="num">'+fmt(m.qty)+'</span>')+kv('الكمية قبل','<span class="num">'+fmt(cur)+'</span>'),kv('الكمية بعد الحذف','<span class="num">'+fmt(after)+'</span>'))+(m.txId?'<div class="alertbox alert-info" style="margin-top:8px">هذه الحركة مرتبطة بفاتورة تاجر — حذفها لا يحذف الفاتورة من حساب التاجر.</div>':''),'حذف الحركة',true,function(){
     DB.stockMovements=DB.stockMovements.filter(function(x){return x.id!==mid});
     saveDB();renderInventory();toast('تم حذف الحركة');
   });
@@ -1279,10 +1393,14 @@ function invoiceModal(sid,existing){
     if(p<0||p>a){$('ivErr').innerHTML='<div class="alertbox alert-err">المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة.</div>';return}
     if(!isValidDateStr(date)){$('ivErr').innerHTML='<div class="alertbox alert-err">التاريخ غير صالح.</div>';return}
     if(existing){
-      var before=kv('الإجمالي','<span class="num">'+fmt(existing.amount)+'</span>')+kv('المدفوع','<span class="num">'+fmt(existing.paidAmount)+'</span>')+kv('النوع',existing.payType==='cash'?'نقدية':'آجلة')+kv('الرصيد قبل','<span class="num">'+fmt(bal)+'</span>');
-      var after=kv('الإجمالي','<span class="num">'+fmt(a)+'</span>')+kv('المدفوع','<span class="num">'+fmt(p)+'</span>')+kv('النوع',kind==='cash'?'نقدية':'آجلة')+kv('الرصيد بعد','<span class="num">'+fmt(proj())+'</span>');
+      var lmv=findLinkedMovement(existing);
+      var ivDescVal=$('ivDesc').value.trim();
+      var before=kv('الإجمالي','<span class="num">'+fmt(existing.amount)+'</span>')+kv('المدفوع','<span class="num">'+fmt(existing.paidAmount)+'</span>')+kv('النوع',existing.payType==='cash'?'نقدية':'آجلة')+kv('الرصيد قبل','<span class="num">'+fmt(bal)+'</span>')+(lmv?kv('وارد مرتبط','موجود: '+fmt(lmv.qty)+' وحدة'):'');
+      var after=kv('الإجمالي','<span class="num">'+fmt(a)+'</span>')+kv('المدفوع','<span class="num">'+fmt(p)+'</span>')+kv('النوع',kind==='cash'?'نقدية':'آجلة')+kv('الرصيد بعد','<span class="num">'+fmt(proj())+'</span>')+(lmv?kv('وارد مرتبط','يُحدَّث تاريخه ويُعاد حساب سعر شراء الصنف'):'');
       confirmModal('مراجعة تعديل الفاتورة',baBox(before,after),'تأكيد الحفظ',false,function(){
-        existing.amount=a;existing.paidAmount=p;existing.payType=kind;existing.date=date;existing.description=$('ivDesc').value.trim();saveDB();renderSuppliers();toast('تم حفظ تعديل الفاتورة');
+        existing.amount=a;existing.paidAmount=p;existing.payType=kind;existing.date=date;existing.description=ivDescVal;
+        if(lmv){lmv.date=date;var lit=DB.inventoryItems.filter(function(x){return x.id===lmv.itemId})[0];if(lit&&Number(lmv.qty)>0)lit.purchasePrice=Math.round((a/Number(lmv.qty))*100)/100}
+        saveDB();renderSuppliers();toast('تم حفظ تعديل الفاتورة');
       });
     }else{
       var tx={id:uid(),supplierId:sid,type:'invoice',amount:a,paidAmount:p,payType:kind,date:date,description:$('ivDesc').value.trim(),seq:nextSeq()};
@@ -1291,7 +1409,9 @@ function invoiceModal(sid,existing){
         var iid=$('ivItem').value,q=Number($('ivQty').value||0);
         var item=DB.inventoryItems.filter(function(x){return x.id===iid})[0];
         if(item&&q>0){
-          DB.stockMovements.push({id:uid(),itemId:iid,type:'in',qty:q,date:date,note:'وارد فاتورة '+s.name,seq:nextSeq()});
+          var mvId=uid();
+          DB.stockMovements.push({id:mvId,itemId:iid,type:'in',qty:q,date:date,note:'وارد فاتورة '+s.name,seq:nextSeq(),txId:tx.id});
+          tx.stockMovementId=mvId;tx.stockItemId=iid;
           item.purchasePrice=Math.round((a/q)*100)/100;
         }
       }
@@ -1325,10 +1445,11 @@ function suppPaymentModal(sid,existing){
     if(a>maxAllowed()+0.001){$('spErr').innerHTML='<div class="alertbox alert-err">مرفوض: الدفعة ('+fmt(a)+') تتجاوز المستحق للتاجر ('+fmt(maxAllowed())+'). الدفع الزائد غير مسموح.</div>';return}
     if(!isValidDateStr(date)){$('spErr').innerHTML='<div class="alertbox alert-err">التاريخ غير صالح.</div>';return}
     if(existing){
+      var spDescVal=$('spDesc').value.trim();
       var before=kv('المبلغ','<span class="num">'+fmt(existing.amount)+'</span>')+kv('التاريخ',fmtDateShort(existing.date))+kv('الرصيد قبل','<span class="num">'+fmt(bal)+'</span>');
       var after=kv('المبلغ','<span class="num">'+fmt(a)+'</span>')+kv('التاريخ',fmtDateShort(date))+kv('الرصيد بعد','<span class="num">'+fmt(proj())+'</span>');
       confirmModal('مراجعة تعديل الدفعة',baBox(before,after),'تأكيد الحفظ',false,function(){
-        existing.amount=a;existing.date=date;existing.description=$('spDesc').value.trim();saveDB();renderSuppliers();toast('تم حفظ تعديل الدفعة');
+        existing.amount=a;existing.date=date;existing.description=spDescVal;saveDB();renderSuppliers();toast('تم حفظ تعديل الدفعة');
       });
     }else{
       DB.supplierTransactions.push({id:uid(),supplierId:sid,type:'payment',amount:a,paidAmount:0,payType:'',date:date,description:$('spDesc').value.trim(),seq:nextSeq()});
@@ -1341,8 +1462,18 @@ function deleteSuppTx(txid,sid){
   var cur=suppBalance(sid);
   var eff=t.type==='invoice'?(Number(t.amount||0)-Number(t.paidAmount||0)):-Number(t.amount||0);
   var after=Math.round((cur-eff)*100)/100;
-  confirmModal('حذف حركة تاجر',baBox(kv('النوع',t.type==='invoice'?'فاتورة':'دفعة')+kv('المبلغ','<span class="num">'+fmt(t.amount)+'</span>')+kv('الرصيد قبل','<span class="num">'+fmt(cur)+'</span>'),kv('الرصيد بعد الحذف','<span class="num">'+fmt(after)+'</span>')),'حذف الحركة',true,function(){
+  var lmv=t.type==='invoice'?findLinkedMovement(t):null;
+  var lit=lmv?DB.inventoryItems.filter(function(x){return x.id===lmv.itemId})[0]:null;
+  if(lmv&&lit){
+    var qcur=itemQty(lit);var qafter=Math.round((qcur-Number(lmv.qty||0))*100)/100;
+    if(wouldGoNegative(qcur,qafter)){
+      openModal(modalHead('تعذّر حذف الفاتورة')+'<div class="alertbox alert-err">حذف هذه الفاتورة يحذف واردها المرتبط ('+fmt(lmv.qty)+' من «'+esc(lit.name)+'»)، ورصيد الصنف سيصبح سالباً ('+fmt(qafter)+') لأن الكمية مستهلكة. صحّح حركات المخزون أولاً ثم أعد المحاولة.</div><button class="btn btn-block" onclick="closeModal()">حسناً</button>');
+      return;
+    }
+  }
+  confirmModal('حذف حركة تاجر',baBox(kv('النوع',t.type==='invoice'?'فاتورة':'دفعة')+kv('المبلغ','<span class="num">'+fmt(t.amount)+'</span>')+kv('الرصيد قبل','<span class="num">'+fmt(cur)+'</span>'),kv('الرصيد بعد الحذف','<span class="num">'+fmt(after)+'</span>')+(lmv&&lit?kv('وارد مرتبط','سيُحذف أيضاً: '+fmt(lmv.qty)+' من «'+esc(lit.name)+'»'):'')),'حذف الحركة',true,function(){
     DB.supplierTransactions=DB.supplierTransactions.filter(function(x){return x.id!==txid});
+    if(lmv)DB.stockMovements=DB.stockMovements.filter(function(x){return x.id!==lmv.id});
     saveDB();renderSuppliers();toast('تم حذف الحركة');
   });
 }
@@ -1920,11 +2051,16 @@ function renderSettings(){
   +'</div>'
 
   +'<div class="card"><h3>كلمة السر والأمان</h3>'
-  +kv('جوال الاستعادة المسجّل','<span class="num">'+esc(maskMobile(DB.auth.recoveryMobile))+'</span>')
-  +kv('Gmail الاستعادة المسجّل',esc(maskMail(DB.auth.recoveryGmail)))
-  +'<label class="flabel">تحديث جوال الاستعادة</label><input type="tel" id="secMobile" placeholder="اتركه فارغاً للإبقاء على الحالي">'
-  +'<label class="flabel">تحديث Gmail الاستعادة</label><input type="email" id="secGmail" placeholder="اتركه فارغاً للإبقاء على الحالي">'
-  +'<button class="btn" id="secRecSave">حفظ بيانات الاستعادة</button>'
+  +kv('الجوال المسجّل','<span class="num">'+esc(maskMobile(DB.auth.recoveryMobile))+'</span>')
+  +kv('Gmail المسجّل (للنسخ الاحتياطية)',esc(maskMail(DB.auth.recoveryGmail)))
+  +'<label class="flabel">تحديث الجوال</label><input type="tel" id="secMobile" placeholder="اتركه فارغاً للإبقاء على الحالي">'
+  +'<label class="flabel">تحديث Gmail</label><input type="email" id="secGmail" placeholder="اتركه فارغاً للإبقاء على الحالي">'
+  +'<button class="btn" id="secRecSave">حفظ بيانات التواصل</button>'
+  +'<div class="divider"></div>'
+  +'<h3 style="margin-bottom:4px">استعادة كلمة السر عبر Gmail</h3>'
+  +'<p class="small muted">نسيت كلمة السر ترسل رابط Google الآمن إلى Gmail المالك المسجّل، وبعد التحقق تعيّن كلمة سر محلية جديدة. هذه الاستعادة تحتاج إنترنت، ولا تُرسل سجلات المحل إلى أي خدمة. بريد الإرسال ثابت على حساب المالك المعتمد ولا يمكن تغييره من هنا.</p>'
+  +kv('الحالة الحالية','<span class="badge badge-amber">رابط Google إلى Gmail المالك المسجّل</span>')
+  +'<div class="alertbox alert-info" style="margin-top:10px">إذا تغيّر Gmail المالك الحقيقي، عدّل حساب استعادة Firebase أولاً من المطوّر؛ تعديل بريد النسخ الاحتياطي أعلاه لا يغيّر وجهة رابط الاستعادة.</div>'
   +'<div class="divider"></div>'
   +'<label class="flabel">كلمة السر الحالية *</label><div class="pwdwrap"><input type="password" id="secCur" autocomplete="current-password"><button type="button" class="eye" data-eye="secCur">👁</button></div>'
   +'<label class="flabel">كلمة السر الجديدة</label><div class="pwdwrap"><input type="password" id="secNew" autocomplete="new-password"><button type="button" class="eye" data-eye="secNew">👁</button></div>'
@@ -1933,12 +2069,12 @@ function renderSettings(){
   +'<button class="btn btn-gold" id="secPwSave" style="margin-top:10px">تغيير كلمة سر المالك</button>'
   +'<div class="divider"></div>'
   +'<h3 style="margin-bottom:4px">رمز PIN للعامل</h3>'
-  +'<p class="small muted">عند تفعيله يُطلب الرمز قبل فتح واجهة العامل لحماية خصوصية أرصدة الزبائن. الرمز محفوظ كبصمة مشفّرة فقط.</p>'
-  +kv('الحالة الحالية',DB.auth.workerPinEnabled?'<span class="badge badge-amber">مفعّل</span>':'<span class="badge">معطّل</span>')
+  +'<p class="small muted">واجهة العامل لا تفتح إلا بهذا الرمز، حمايةً لأرصدة الزبائن والأسعار. الرمز محفوظ كبصمة مشفّرة فقط، ولا يمكن تعطيله — يمكن تغييره فقط.</p>'
+  +kv('الحالة الحالية',DB.auth.workerPinEnabled?'<span class="badge badge-amber">مفعّل</span>':'<span class="badge badge-debt">غير معيّن — وضع العامل متوقف</span>')
   +'<div id="pinArea">'
   +(DB.auth.workerPinEnabled
-    ?'<label class="flabel">رمز PIN جديد (٤ إلى ٦ أرقام)</label><input type="password" id="pinNew" inputmode="numeric" maxlength="6" placeholder="••••"><label class="flabel">تأكيد الرمز الجديد</label><input type="password" id="pinNew2" inputmode="numeric" maxlength="6" placeholder="••••"><div class="rowline" style="margin-top:10px"><button class="btn" id="pinChange">تغيير / إعادة تعيين الرمز</button><button class="btn btn-danger" id="pinDisable">تعطيل رمز PIN</button></div>'
-    :'<label class="flabel">تعيين رمز PIN (٤ إلى ٦ أرقام)</label><input type="password" id="pinNew" inputmode="numeric" maxlength="6" placeholder="••••"><label class="flabel">تأكيد الرمز</label><input type="password" id="pinNew2" inputmode="numeric" maxlength="6" placeholder="••••"><button class="btn btn-gold" id="pinEnable" style="margin-top:10px">تفعيل رمز PIN للعامل</button>')
+    ?'<label class="flabel">رمز PIN جديد (٤ إلى ٦ أرقام)</label><input type="password" id="pinNew" inputmode="numeric" maxlength="6" placeholder="••••"><label class="flabel">تأكيد الرمز الجديد</label><input type="password" id="pinNew2" inputmode="numeric" maxlength="6" placeholder="••••"><div class="rowline" style="margin-top:10px"><button class="btn" id="pinChange">تغيير / إعادة تعيين الرمز</button></div>'
+    :'<div class="alertbox alert-warn">وضع العامل متوقف حالياً حتى تعيين الرمز هنا.</div><label class="flabel">تعيين رمز PIN (٤ إلى ٦ أرقام)</label><input type="password" id="pinNew" inputmode="numeric" maxlength="6" placeholder="••••"><label class="flabel">تأكيد الرمز</label><input type="password" id="pinNew2" inputmode="numeric" maxlength="6" placeholder="••••"><button class="btn btn-gold" id="pinEnable" style="margin-top:10px">تعيين رمز PIN للعامل</button>')
   +'<div id="pinMsg"></div></div></div>'
 
   +'<div class="card"><h3>النسخ الاحتياطي والاسترداد</h3>'
@@ -1990,11 +2126,6 @@ function renderSettings(){
   }
   var pe=$('pinEnable');if(pe)pe.onclick=function(){pinSet(true)};
   var pc=$('pinChange');if(pc)pc.onclick=function(){pinSet(false)};
-  var pd=$('pinDisable');if(pd)pd.onclick=function(){
-    confirmModal('تعطيل رمز PIN للعامل','<p>خطوة تأكيد: بعد التعطيل سيفتح «دخول العامل» مباشرة دون أي رمز، وستكون أرصدة الزبائن ظاهرة لأي شخص يمسك الجهاز.</p>','تعطيل الرمز',true,function(){
-      DB.auth.workerPinEnabled=false;DB.auth.workerPinHash='';DB.auth.workerPinSalt='';saveDB();renderSettings();toast('تم تعطيل رمز PIN للعامل');
-    });
-  };
   $('bkExport').onclick=function(){exportBackup(false)};
   $('bkGmail').onclick=function(){exportBackup(true)};
   $('bkRestore').onclick=function(){$('fileRestore').click()};
@@ -2154,8 +2285,5 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
-</body>
-</html>
-
 </body>
 </html>
